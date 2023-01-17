@@ -2,6 +2,11 @@
 
 // std
 #include <string>
+#include <cmath>
+
+// freertos
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 // esp
 #include "esp_system.h"
@@ -164,6 +169,52 @@ bool write_position_pid_handler(const char **argv, const int argc)
     return true;
 }
 
+TaskHandle_t print_task_handle = NULL;
+static bool print_on = false;
+
+static bool print_motor_parameter(void)
+{
+    float current = get_motor_current();
+    float velocity = get_motor_velocity();
+    float position = get_motor_position();
+
+    float pwm = get_motor_pwm();
+
+    ei_printf("current: %.2fA, velocity: %.1frad/s, position: %.1frad, pwm: %.1f\n", current, velocity, position, pwm);
+
+    return true;
+}
+
+static void print_motor_parameter_task(void *args)
+{
+    while (true) {
+        if (print_on) {
+            print_motor_parameter();
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+}
+
+bool print_motor_parameter_handler(const char **argv, const int argc)
+{
+    check_args_num(1, argc);
+
+    std::string on(argv[0]);
+
+    if (on == "ON") {
+        if (!print_task_handle) {
+            print_on = true;
+            xTaskCreatePinnedToCore(print_motor_parameter_task, "print_motor_parameter_task", 4096, NULL, 6, &print_task_handle, 1);
+        }
+    } else if (on == "OFF") {
+        print_on = false;
+    } else {
+        ei_printf("%s is not supported command\n", on.c_str());
+    }
+
+    return true;
+}
+
 ATServer *ei_at_init()
 {
     ATServer *at;
@@ -218,6 +269,14 @@ ATServer *ei_at_init()
         read_position_pid_handler,
         write_position_pid_handler,
         "P,I,D");
+
+    at->register_command(
+        "PRINT",
+        "Print Motor Parameters",
+        print_motor_parameter,
+        nullptr,
+        print_motor_parameter_handler,
+        "ON/OFF");
 
     return at;
 }
