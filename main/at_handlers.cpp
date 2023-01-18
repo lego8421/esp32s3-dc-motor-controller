@@ -116,7 +116,7 @@ bool write_position_handler(const char **argv, const int argc)
 bool read_current_pid_handler(void)
 {
     motor_pid_gain_t gain = motor_control_get_current_pid_gain();
-    ei_printf("read current pid - p: %.2f, i: %.2f, d: %.2f\n", gain.p, gain.i, gain.d);
+    ei_printf("read current pid - p: %.5f, i: %.5f, d: %.5f\n", gain.p, gain.i, gain.d);
     return true;
 }
 
@@ -134,7 +134,7 @@ bool write_current_pid_handler(const char **argv, const int argc)
         .d = d
     };
 
-    ei_printf("write current pid - p: %.2f, i: %.2f, d: %.2f\n", p, i, d);
+    ei_printf("write current pid - p: %.5f, i: %.5f, d: %.5f\n", p, i, d);
     motor_control_set_current_pid_gain(gain);
 
     return true;
@@ -144,7 +144,7 @@ bool read_position_pid_handler(void)
 {
     motor_pid_gain_t gain = motor_control_get_position_pid_gain();
 
-    ei_printf("read position pid - p: %.2f, i: %.2f, d: %.2f\n", gain.p, gain.i, gain.d);
+    ei_printf("read position pid - p: %.5f, i: %.5f, d: %.5f\n", gain.p, gain.i, gain.d);
 
     return true;
 }
@@ -163,7 +163,7 @@ bool write_position_pid_handler(const char **argv, const int argc)
         .d = d
     };
 
-    ei_printf("write position pid - p: %.2f, i: %.2f, d: %.2f\n", p, i, d);
+    ei_printf("write position pid - p: %.5f, i: %.5f, d: %.5f\n", p, i, d);
     motor_control_set_position_pid_gain(gain);
 
     return true;
@@ -180,7 +180,7 @@ static bool print_motor_parameter(void)
 
     float pwm = get_motor_pwm();
 
-    ei_printf("current: %.2fA, velocity: %.1frad/s, position: %.1frad, pwm: %.1f\n", current, velocity, position, pwm);
+    ei_printf("current: %.2fA, velocity: %.2frad/s, position: %.3frad, pwm: %.1f%\n", current, velocity, position, pwm);
 
     return true;
 }
@@ -202,8 +202,8 @@ bool print_motor_parameter_handler(const char **argv, const int argc)
     std::string on(argv[0]);
 
     if (on == "ON") {
+        print_on = true;
         if (!print_task_handle) {
-            print_on = true;
             xTaskCreatePinnedToCore(print_motor_parameter_task, "print_motor_parameter_task", 4096, NULL, 6, &print_task_handle, 1);
         }
     } else if (on == "OFF") {

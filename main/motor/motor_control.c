@@ -34,6 +34,8 @@ static const gpio_num_t GPIO_PCNT_PINB = GPIO_NUM_19;
 static const uint32_t MOTOR_CTRL_PWM_FREQUENCY = 20000;
 static const mcpwm_unit_t MOTOR_CTRL_MCPWM_UNIT = MCPWM_UNIT_0;
 static const mcpwm_timer_t MOTOR_CTRL_MCPWM_TIMER = MCPWM_TIMER_0;
+static const float MOTOR_CTRL_MCPWM_MIN_DUTY = 50.0f;
+static const float MOTOR_CTRL_MCPWM_MAX_DUTY = 100.0f;
 
 static const uint32_t MOTOR_CTRL_TIMER_DIVIDER = 16;
 static const timer_group_t MOTOR_CONTROL_TIMER_GROUP = TIMER_GROUP_0;
@@ -79,10 +81,10 @@ static esp_err_t motor_control_pwn_init()
     mcpwm_gpio_init(MOTOR_CTRL_MCPWM_UNIT, MCPWM0B, GPIO_PWM0B_OUT);
 
     mcpwm_config_t pwm_config;
-    pwm_config.frequency = MOTOR_CTRL_PWM_FREQUENCY;
-    pwm_config.cmpr_a = 0;
-    pwm_config.cmpr_b = 0;
-    pwm_config.counter_mode = MCPWM_UP_COUNTER;
+    pwm_config.frequency = MOTOR_CTRL_PWM_FREQUENCY * 2;
+    pwm_config.cmpr_a = 50;
+    pwm_config.cmpr_b = 50;
+    pwm_config.counter_mode = MCPWM_UP_DOWN_COUNTER;
     pwm_config.duty_mode = MCPWM_DUTY_MODE_0;
     return mcpwm_init(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, &pwm_config);
 }
@@ -139,14 +141,27 @@ static esp_err_t motor_control_timer_init(uint32_t frequency)
 static void run_motor()
 {
     float pwm = motor_control.pwm;
-    if (pwm > 0) {
-        mcpwm_set_signal_low(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_A);
-        mcpwm_set_duty(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_B, pwm);
-        mcpwm_set_duty_type(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_B, MCPWM_DUTY_MODE_0);
+
+    if (pwm > 100.0f) {
+        pwm = 100.0f;
+    } else if (pwm < -100.0f) {
+        pwm = -100.0f;
+    }
+
+    float duty = fabs(pwm) * (MOTOR_CTRL_MCPWM_MAX_DUTY - MOTOR_CTRL_MCPWM_MIN_DUTY) / 100.0f + MOTOR_CTRL_MCPWM_MIN_DUTY;
+
+    if (duty > MOTOR_CTRL_MCPWM_MAX_DUTY) {
+        duty = MOTOR_CTRL_MCPWM_MAX_DUTY;
+    } else if (duty < MOTOR_CTRL_MCPWM_MIN_DUTY) {
+        duty = MOTOR_CTRL_MCPWM_MIN_DUTY;
+    }
+
+    if (pwm >= 0) {
+        mcpwm_set_duty(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_A, 100.0f - duty);
+        mcpwm_set_duty(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_B, duty);
     } else {
-        mcpwm_set_signal_low(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_B);
-        mcpwm_set_duty(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_A, -pwm);
-        mcpwm_set_duty_type(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_A, MCPWM_DUTY_MODE_0);
+        mcpwm_set_duty(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_A, duty);
+        mcpwm_set_duty(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, MCPWM_OPR_B, 100.0f - duty);
     }
 }
 
@@ -209,13 +224,13 @@ static void motor_control_task(void *args)
                 diff += 2 * M_PI;
             }
             float radian = diff / dt;
-            motor_control.velocity = motor_control.velocity * 0.1f + radian * 0.9f;
+            motor_control.velocity = motor_control.velocity * 0.9f + radian * 0.1f;
 
             position_past = motor_control.position;
         }
 
         float current = ((VOLTAGE_OFFSET + motor_control.adc / 1000.0f) * ADC_TO_CURRENT) - motor_control.current_offset;
-        motor_control.current = motor_control.current * 0.2f + current * 0.8f;
+        motor_control.current = motor_control.current * 0.9f + current * 0.1f;
 
         switch (motor_control.mode) {
             case MOTOR_CONTROL_MODE_INIT: {
@@ -274,12 +289,12 @@ bool init_motor_control(uint32_t current_frequency, uint32_t velocity_frequency,
     motor_control_set_current_pid_gain(current_pid_gain);
 
     motor_pid_gain_t position_pid_gain = {
-        .p = 800.0f,
-        .i = 0.0f,
-        .d = 25000.0f
+        .p = 120.0f,
+        .i = 0.01f,
+        .d = 100000.0f
     };
     motor_control_set_position_pid_gain(position_pid_gain);
-    motor_control.pid.position._ErrSumLimit = 500.0f;
+    motor_control.pid.position._ErrSumLimit = 10.0f;
 
     path_init(&motor_control.position_path, 0.0f);
 
