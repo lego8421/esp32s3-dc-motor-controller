@@ -169,6 +169,15 @@ bool write_position_pid_handler(const char **argv, const int argc)
     return true;
 }
 
+static bool calibrate_motor_current_sensor(void)
+{
+    motor_control_calibrate_current();
+
+    ei_printf("calibrate motor current sensor\n");
+
+    return true;
+}
+
 TaskHandle_t print_task_handle = NULL;
 static bool print_on = false;
 
@@ -269,6 +278,14 @@ ATServer *ei_at_init()
         read_position_pid_handler,
         write_position_pid_handler,
         "P,I,D");
+
+    at->register_command(
+        "CAL",
+        "Calibrate Current Snesor",
+        calibrate_motor_current_sensor,
+        nullptr,
+        nullptr,
+        "");
 
     at->register_command(
         "PRINT",

@@ -34,6 +34,7 @@ extern "C" {
 #define MOTOR_CONTROL_MODE_SET_ORIGIN           4       // reserve
 #define MOTOR_CONTROL_MODE_SENSORLESS           5       // reserve
 #define MOTOR_CONTROL_MODE_PWM                  6
+#define MOTOR_CONTROL_MODE_CURRENT_OFFSET       20
 #define MOTOR_CONTROL_MODE_EMERGENCY            0xFF
 
 #define MOTOR_CONTROL_CURRENT_LIMIT_REF         0.5f
@@ -56,7 +57,11 @@ extern "C" {
 
 // motor
 #define VDC                                     6.0f
-
+#define MOTOR_INDUCTANCE                        0.0015f
+#define MOTOR_RESISTANCE                        4.2f
+#define PULSE_TO_RADIAN                         (2 * M_PI / 348.0f)     // ratio: 1/29, encoder: 12 [P/R] -> 29 * 12 = 348 [P/R]
+#define ADC_VOLTAGE_OFFSET                      1.65f
+#define ADC_VOLTAGE_TO_CURRENT                  (1.0f / 0.055f)         // [A/V]
 
 typedef struct motor_pid_gain {
     float p;
@@ -81,8 +86,6 @@ typedef struct motor_control {
     float velocity;
     float position;
 
-    float current_offset;
-
     struct {
         uint32_t current;
         uint32_t velocity;
@@ -97,17 +100,14 @@ typedef struct motor_control {
 
     motor_limit_parameters_t limit;
 
+    // path interpolation
     path_interpolation position_path;
 
-    rotary_encoder_t *encoder_module;
-    QueueHandle_t timer_event_queue;
-
-    // adc
-    uint32_t adc;
-    esp_adc_cal_characteristics_t adc_chars;
-
+    // current calibration
+    uint32_t current_calibration_cnt;
+    float current_calibration_sum;
+    float current_offset;
 } motor_control_t;
-
 
 bool init_motor_control(uint32_t current_frequency, uint32_t velocity_frequency, uint32_t position_frequency);
 
@@ -123,6 +123,7 @@ uint8_t motor_control_set_current_target(float target);
 uint8_t motor_control_set_velocity_target(float target);
 uint8_t motor_control_set_position_target(float target);
 uint8_t motor_control_set_pwm_target(float target);
+uint8_t motor_control_calibrate_current();
 
 motor_pid_gain_t motor_control_get_current_pid_gain();
 void motor_control_set_current_pid_gain(motor_pid_gain_t gain);

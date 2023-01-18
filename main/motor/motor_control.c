@@ -26,32 +26,27 @@
 
 static const char* TAG = "motor_control";
 
+motor_control_t motor_control;
+
+// timer event
+static QueueHandle_t timer_event_queue = NULL;
+
+// pwm
 static const gpio_num_t GPIO_PWM0A_OUT = GPIO_NUM_15;
 static const gpio_num_t GPIO_PWM0B_OUT = GPIO_NUM_16;
-static const gpio_num_t GPIO_PCNT_PINA = GPIO_NUM_18;
-static const gpio_num_t GPIO_PCNT_PINB = GPIO_NUM_19;
-
 static const uint32_t MOTOR_CTRL_PWM_FREQUENCY = 20000;
 static const mcpwm_unit_t MOTOR_CTRL_MCPWM_UNIT = MCPWM_UNIT_0;
 static const mcpwm_timer_t MOTOR_CTRL_MCPWM_TIMER = MCPWM_TIMER_0;
 static const float MOTOR_CTRL_MCPWM_MIN_DUTY = 50.0f;
 static const float MOTOR_CTRL_MCPWM_MAX_DUTY = 100.0f;
 
-static const uint32_t MOTOR_CTRL_TIMER_DIVIDER = 16;
-static const timer_group_t MOTOR_CONTROL_TIMER_GROUP = TIMER_GROUP_0;
-static const timer_idx_t MOTOR_CONTROL_TIMER_ID = TIMER_0;
+// encoder
+static const gpio_num_t GPIO_PCNT_PINA = GPIO_NUM_18;
+static const gpio_num_t GPIO_PCNT_PINB = GPIO_NUM_19;
+static rotary_encoder_t *encoder_module = NULL;
 
-
-static const float MOTOR_INDUCTANCE = 0.0015f;
-static const float MOTOR_RESISTANCE = 4.2f;
-// ratio: 1/29, encoder: 12 [P/R] -> 29 * 12 = 348 [P/R]
-static const float PULSE_TO_RADIAN = 2 * M_PI / 348.0f;
-
-// 0.055 [V/A]
-static const float VOLTAGE_OFFSET = 1.65f;
-static const float ADC_TO_CURRENT = 1.0f / 0.055;   // [A/V]
-
-motor_control_t motor_control;
+// adc for current sensor
+static esp_adc_cal_characteristics_t adc_chars;
 
 static esp_err_t motor_control_encoder_init()
 {
@@ -59,15 +54,15 @@ static esp_err_t motor_control_encoder_init()
     uint32_t pcnt_unit = 0;
     rotary_encoder_config_t encoder_config = ROTARY_ENCODER_DEFAULT_CONFIG((rotary_encoder_dev_t)pcnt_unit, GPIO_PCNT_PINA, GPIO_PCNT_PINB);
 
-    esp_err_t ret = rotary_encoder_new_ec11(&encoder_config, &motor_control.encoder_module);
+    esp_err_t ret = rotary_encoder_new_ec11(&encoder_config, &encoder_module);
     ESP_RETURN_ON_ERROR(ret, TAG, "rotary_encoder init failed");
 
     /* Filter out glitch (1us) */
-    ret = motor_control.encoder_module->set_glitch_filter(motor_control.encoder_module, 1);
+    ret = encoder_module->set_glitch_filter(encoder_module, 1);
     ESP_RETURN_ON_ERROR(ret, TAG, "rotary_encoder glitch_filter failed");
 
     /* Start encoder */
-    ret = motor_control.encoder_module->start(motor_control.encoder_module);
+    ret = encoder_module->start(encoder_module);
     ESP_RETURN_ON_ERROR(ret, TAG, "rotary_encoder start failed");
 
     pcnt_counter_clear((pcnt_unit_t)pcnt_unit);
@@ -89,27 +84,16 @@ static esp_err_t motor_control_pwn_init()
     return mcpwm_init(MOTOR_CTRL_MCPWM_UNIT, MOTOR_CTRL_MCPWM_TIMER, &pwm_config);
 }
 
-static void motor_control_adc_task(void *args)
-{
-    while (true) {
-        int raw = adc1_get_raw(ADC1_CHANNEL_2);
-        motor_control.adc = esp_adc_cal_raw_to_voltage(raw, &motor_control.adc_chars);
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-}
-
-static esp_err_t motor_control_current_init()
+static esp_err_t motor_control_adc_init()
 {
     esp_err_t ret = esp_adc_cal_check_efuse(ESP_ADC_CAL_VAL_EFUSE_TP_FIT);
 
     ESP_RETURN_ON_ERROR(ret, TAG, "adc init failed");
 
-    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_DEFAULT, 0, &motor_control.adc_chars);
+    esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_11, ADC_WIDTH_BIT_DEFAULT, 0, &adc_chars);
 
     adc1_config_width(ADC_WIDTH_BIT_DEFAULT);
     adc1_config_channel_atten(ADC1_CHANNEL_2, ADC_ATTEN_DB_11);
-
-    xTaskCreatePinnedToCore(motor_control_adc_task, "motor_control_adc_task", 4096, NULL, 5, NULL, 1);
 
     return ESP_OK;
 }
@@ -118,10 +102,10 @@ static bool motor_timer_callback_function(void)
 {
     BaseType_t high_task_awoken = pdFALSE;
 
-    int32_t pulse = motor_control.encoder_module->get_counter_value(motor_control.encoder_module);
+    int32_t pulse = encoder_module->get_counter_value(encoder_module);
 
     /* Now just send the event data back to the main program task */
-    xQueueSendFromISR(motor_control.timer_event_queue, &pulse, &high_task_awoken);
+    xQueueSendFromISR(timer_event_queue, &pulse, &high_task_awoken);
 
     // return whether we need to yield at the end of ISR
     return high_task_awoken == pdTRUE;
@@ -131,7 +115,7 @@ static esp_err_t motor_control_timer_init(uint32_t frequency)
 {
     esp_err_t ret = ESP_OK;
 
-    motor_control.timer_event_queue = xQueueCreate(10, sizeof(int32_t));
+    timer_event_queue = xQueueCreate(10, sizeof(int32_t));
 
     timer_interrupt_init(motor_timer_callback_function, frequency);
 
@@ -177,6 +161,13 @@ static void calculate_pwm(float v)
     motor_control.pwm = duty;
 }
 
+static float get_adc_voltage()
+{
+    int raw = adc1_get_raw(ADC1_CHANNEL_2);
+    float voltage = (float)esp_adc_cal_raw_to_voltage(raw, &adc_chars) / 1000.0f;
+    return voltage;
+}
+
 static void motor_control_task(void *args)
 {
     int32_t velocity_cnt = 0;
@@ -187,21 +178,13 @@ static void motor_control_task(void *args)
 
     float position_past = 0.0f;
 
-    float current_sum = 0.0;
-
-    for (int i = 0; i < 50; i++) {
-        current_sum += (VOLTAGE_OFFSET + motor_control.adc / 1000.0f) * ADC_TO_CURRENT;
-        vTaskDelay(pdMS_TO_TICKS(10));
-    }
-    motor_control.current_offset = current_sum / 50.0f;
-
     while (true) {
         bool is_velocity_frequency = false;
         bool is_position_frequency = false;
         int32_t pulse = 0;
 
         // wait for timer interrupt
-        xQueueReceive(motor_control.timer_event_queue, &pulse, portMAX_DELAY);
+        xQueueReceive(timer_event_queue, &pulse, portMAX_DELAY);
 
         if (position_cnt % position_tick == 0) {
             position_cnt = 0;
@@ -212,8 +195,13 @@ static void motor_control_task(void *args)
             is_velocity_frequency = true;
         }
 
+        // encoder pulse
         motor_control.pulse = pulse;
+
+        // calculate position
         motor_control.position = motor_control.pulse * PULSE_TO_RADIAN;
+
+        // calculate velocity
         if (is_velocity_frequency) {
             float dt = 1.0f / motor_control.frequency.velocity;
             float diff = motor_control.position - position_past;
@@ -229,7 +217,9 @@ static void motor_control_task(void *args)
             position_past = motor_control.position;
         }
 
-        float current = ((VOLTAGE_OFFSET + motor_control.adc / 1000.0f) * ADC_TO_CURRENT) - motor_control.current_offset;
+        // calculate current
+        float voltage = get_adc_voltage();
+        float current = (-(ADC_VOLTAGE_OFFSET - voltage) * ADC_VOLTAGE_TO_CURRENT) - motor_control.current_offset;
         motor_control.current = motor_control.current * 0.9f + current * 0.1f;
 
         switch (motor_control.mode) {
@@ -262,6 +252,22 @@ static void motor_control_task(void *args)
                 calculate_pwm(0);
                 run_motor();
             } break;
+            case MOTOR_CONTROL_MODE_CURRENT_OFFSET: {
+                calculate_pwm(0);
+                run_motor();
+
+                float current_cali = -(ADC_VOLTAGE_OFFSET - voltage) * ADC_VOLTAGE_TO_CURRENT;
+                motor_control.current_calibration_sum += current_cali;
+                motor_control.current_calibration_cnt++;
+
+                if (motor_control.current_calibration_cnt >= 100) {
+                    motor_control.current_offset = motor_control.current_calibration_sum / 100.0f;
+
+                    motor_control.current_calibration_sum = 0.0f;
+                    motor_control.current_calibration_cnt = 0;
+                    motor_control.mode = MOTOR_CONTROL_MODE_INIT;
+                }
+            } break;
         }
 
         velocity_cnt++;
@@ -277,27 +283,23 @@ bool init_motor_control(uint32_t current_frequency, uint32_t velocity_frequency,
     motor_control.frequency.velocity = velocity_frequency;
     motor_control.frequency.position = position_frequency;
 
-    pid_control_init_current(&motor_control.pid.current);
-    pid_control_init_velocity(&motor_control.pid.velocity);
-    pid_control_init_position(&motor_control.pid.position);
-
+    // pid
     motor_pid_gain_t current_pid_gain = {
-        .p = MOTOR_INDUCTANCE * 2.0f * M_PI * current_frequency * MOTOR_CONTROL_WC_REF * 0.5f,
-        .i = MOTOR_RESISTANCE * 2.0f * M_PI * MOTOR_CONTROL_WC_REF * 0.0005f,
+        .p = 10.0f,
+        .i = 0.001f,
         .d = 0.0f
     };
     motor_control_set_current_pid_gain(current_pid_gain);
 
     motor_pid_gain_t position_pid_gain = {
-        .p = 120.0f,
-        .i = 0.01f,
-        .d = 100000.0f
+        .p = 6.0f,
+        .i = 0.0001f,
+        .d = 0.2f
     };
     motor_control_set_position_pid_gain(position_pid_gain);
     motor_control.pid.position._ErrSumLimit = 10.0f;
 
-    path_init(&motor_control.position_path, 0.0f);
-
+    // limit
     motor_limit_parameters_t limit = {
         .current = MOTOR_CONTROL_CURRENT_LIMIT_MAX,
         .velocity = MOTOR_CONTROL_VELOCITY_LIMIT_REF,
@@ -305,8 +307,11 @@ bool init_motor_control(uint32_t current_frequency, uint32_t velocity_frequency,
     };
     motor_control.limit = limit;
 
+    // path
+    path_init(&motor_control.position_path, 0.0f);
+
     // current sensor
-    if (motor_control_current_init() != ESP_OK) {
+    if (motor_control_adc_init() != ESP_OK) {
         motor_control.err_state = MOTOR_CONTROL_ERR_STATE_MOTOR_FAIL;
         return false;
     }
@@ -317,7 +322,7 @@ bool init_motor_control(uint32_t current_frequency, uint32_t velocity_frequency,
         return false;
     }
 
-    // motor control timer
+    // control timer
     if (motor_control_timer_init(motor_control.frequency.current) != ESP_OK) {
         motor_control.err_state = MOTOR_CONTROL_ERR_STATE_MOTOR_FAIL;
         return false;
@@ -326,6 +331,11 @@ bool init_motor_control(uint32_t current_frequency, uint32_t velocity_frequency,
     xTaskCreatePinnedToCore(motor_control_task, "motor_control_task", 8192, NULL, 3, NULL, 1);
 
     motor_control.err_state = MOTOR_CONTROL_ERR_STATE_OK;
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    motor_control_calibrate_current();
+
     return true;
 }
 
@@ -473,6 +483,17 @@ uint8_t motor_control_set_pwm_target(float target)
 
         motor_control.pwm = target;
         motor_control.mode = MOTOR_CONTROL_MODE_PWM;
+    }
+
+    return motor_control.err_state;
+}
+
+uint8_t motor_control_calibrate_current()
+{
+    if (motor_control.err_state == MOTOR_CONTROL_ERR_STATE_OK) {
+        motor_control.current_calibration_cnt = 0;
+        motor_control.current_calibration_sum = 0.0f;
+        motor_control.mode = MOTOR_CONTROL_MODE_CURRENT_OFFSET;
     }
 
     return motor_control.err_state;
