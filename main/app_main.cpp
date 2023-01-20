@@ -10,7 +10,9 @@
 // esp
 #include "esp_log.h"
 
+// components
 #include "lqr_steer_control.h"
+#include "perfmon_monitor.h"
 
 // app
 #include "define.h"
@@ -21,7 +23,6 @@
 static const char *TAG = "app_main";
 
 extern "C" void app_main(void);
-
 
 enum GOLFCAR_COMMAND
 {
@@ -140,6 +141,8 @@ void app_main(void)
     xTaskCreatePinnedToCore((TaskFunction_t)at_command_task, "at_command_task", 4 * 1024, NULL, 7, NULL, 0);
 
     xTaskCreatePinnedToCore(cycle_update_task, "cycle", 4096, NULL, 3, NULL, 0);
+
+    ESP_ERROR_CHECK(start_perfmon_monitor());
 
     vTaskDelay(pdMS_TO_TICKS(5000));
     command = COMMAND_SETTING_PATH;
