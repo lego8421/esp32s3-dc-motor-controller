@@ -12,6 +12,7 @@
 // app
 #include "motor_control.h"
 #include "at_handlers.h"
+#include "app_loadcell.h"
 
 
 static const char *TAG = "app_main";
@@ -20,20 +21,33 @@ extern "C" void app_main(void);
 
 void app_main(void)
 {
-    uint32_t current_frequency = 20000;
-    uint32_t velocity_frequency = 1000;
-    uint32_t position_frequency = 1000;
+    // uint32_t current_frequency = 20000;
+    // uint32_t velocity_frequency = 1000;
+    // uint32_t position_frequency = 1000;
 
-    ESP_LOGI(TAG, "motor control init");
-    bool init = init_motor_control(current_frequency, velocity_frequency, position_frequency);
-    if (!init) {
-        ESP_LOGE(TAG, "motor control init fail");
-    }
+    // ESP_LOGI(TAG, "motor control init");
+    // bool init = init_motor_control(current_frequency, velocity_frequency, position_frequency);
+    // if (!init) {
+    //     ESP_LOGE(TAG, "motor control init fail");
+    // }
 
-    ESP_LOGI(TAG, "at command init");
-    xTaskCreatePinnedToCore((TaskFunction_t)at_command_task, "at_command_task", 4 * 1024, NULL, 7, NULL, 0);
+    // ESP_LOGI(TAG, "at command init");
+    // xTaskCreatePinnedToCore((TaskFunction_t)at_command_task, "at_command_task", 4 * 1024, NULL, 7, NULL, 0);
+
+    // while (true) {
+    //     vTaskDelay(pdMS_TO_TICKS(100));
+    // }
+
+    loadcell_init();
 
     while (true) {
+        int32_t data0 = loadcell_read(0);
+        vTaskDelay(pdMS_TO_TICKS(1));
+        int32_t data1 = loadcell_read(1);
+        vTaskDelay(pdMS_TO_TICKS(1));
+
+        ESP_LOGI(TAG, "loadcell - data0: %d, data1: %d", data0, data1);
+
         vTaskDelay(pdMS_TO_TICKS(100));
     }
 }
