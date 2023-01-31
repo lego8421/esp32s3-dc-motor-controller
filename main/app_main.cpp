@@ -51,12 +51,16 @@ void app_main(void)
 
     opticalflow_init();
 
+    int16_t pos[2] = {0, };
     while (true) {
-        int16_t delta_x = 0;
-        int16_t delta_y = 0;
-        opticalflow_read(&delta_x, &delta_y);
+        int16_t delta[2] = {0, };
+        opticalflow_read(&delta[0], &delta[1]);
 
-        ESP_LOGI(TAG, "delta_x: %d, delta_y: %d", delta_x, delta_y);
+        for (int i = 0; i < 2; i++) {
+            pos[i] += delta[i];
+        }
+
+        ESP_LOGI(TAG, "x: %d, y: %d", pos[0], pos[1]);
 
         vTaskDelay(pdMS_TO_TICKS(1));
     }
