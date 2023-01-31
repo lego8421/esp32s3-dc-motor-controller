@@ -13,6 +13,7 @@
 #include "motor_control.h"
 #include "at_handlers.h"
 #include "app_loadcell.h"
+#include "app_opticalflow.h"
 
 
 static const char *TAG = "app_main";
@@ -38,16 +39,25 @@ void app_main(void)
     //     vTaskDelay(pdMS_TO_TICKS(100));
     // }
 
-    loadcell_init();
+    // loadcell_init();
+
+    // while (true) {
+    //     int32_t loadcell = loadcell_read();
+
+    //     ESP_LOGI(TAG, "loadcell: %d", loadcell);
+
+    //     vTaskDelay(pdMS_TO_TICKS(100));
+    // }
+
+    opticalflow_init();
 
     while (true) {
-        int32_t data0 = loadcell_read(0);
-        vTaskDelay(pdMS_TO_TICKS(1));
-        int32_t data1 = loadcell_read(1);
-        vTaskDelay(pdMS_TO_TICKS(1));
+        int16_t delta_x = 0;
+        int16_t delta_y = 0;
+        opticalflow_read(&delta_x, &delta_y);
 
-        ESP_LOGI(TAG, "loadcell - data0: %d, data1: %d", data0, data1);
+        ESP_LOGI(TAG, "delta_x: %d, delta_y: %d", delta_x, delta_y);
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        vTaskDelay(pdMS_TO_TICKS(1));
     }
 }

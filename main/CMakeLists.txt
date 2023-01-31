@@ -8,6 +8,7 @@ idf_component_register(
         ${PROJECT_DIR}/main/motor/timer_interrupt.c
         # test
         ${PROJECT_DIR}/main/app_loadcell.cpp
+        ${PROJECT_DIR}/main/app_opticalflow.cpp
     INCLUDE_DIRS
         .
         ./motor
