@@ -62,6 +62,6 @@ void app_main(void)
 
         ESP_LOGI(TAG, "x: %d, y: %d", pos[0], pos[1]);
 
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
 }
